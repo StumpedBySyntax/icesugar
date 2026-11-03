@@ -1,0 +1,18 @@
+set_io clk  35
+set_io led 39
+
+#PMOD2 to LCD
+
+#1 - IOB_0A - 46   -  NC
+#2 - IOB_3B_G6 - 44   - NC
+#3 - IOT_51A - 42   - RS
+#4 - IOT_45A_G1 - 37  - NC
+#9 - IOT_48B - 36 - CLK
+#10 - IOT_50B - 38   - NC
+#11 - IOT_49A - 43   - MOSI
+#12 - IOB_5B - 45   - CS
+
+set_io lcd_rst      42
+set_io spi_clk      36 
+set_io spi_mosi     43
+set_io spi_cs       45

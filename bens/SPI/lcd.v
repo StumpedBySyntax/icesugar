@@ -29,6 +29,34 @@ The SPI Master shall provide a reusable interface between the FPGA and SPI perip
 /* Input clock 48 MHz */
 
 
+module top (
+    input  wire clk,
+    input  wire rst,
+
+    output wire spi_cs,
+    output wire spi_clk,
+    output wire spi_mosi,
+
+    output wire lcd_dc,
+    output wire lcd_rst
+);
+
+    lcd_driver lcd0 (
+        .clk(clk),
+        .rst(rst),
+
+        .spi_cs(spi_cs),
+        .spi_clk(spi_clk),
+        .spi_mosi(spi_mosi),
+
+        .lcd_dc(lcd_dc),
+        .lcd_rst(lcd_rst)
+    );
+
+endmodule
+
+
+
 
 /* Need a clock divider mechanism. To avoid multiple clock domains, use a clock enable module with divisor
 parameter so we can adjust output frequency. Then all other modules will use the main 48 Mhz clock as input */
@@ -60,11 +88,11 @@ module clock_enable #(
     output reg  tick
 );
 
-    reg [15:0] counter;
+    reg [25:0] counter;
 
     always @(posedge clk) begin
         if (rst) begin
-            counter <= 16'd0;
+            counter <= 26'd0;
             tick    <= 1'b0;
         end
         else begin
@@ -73,7 +101,7 @@ module clock_enable #(
             tick <= 1'b0;
 
             if (counter == (DIVISOR - 1)) begin
-                counter <= 16'd0;
+                counter <= 26'd0;
                 tick    <= 1'b1;
             end
             else begin
@@ -115,67 +143,135 @@ module spi_master (
     // 1 - Load
     // 2 - Transfer - SHIFT_LOW
     // 3 - Transfer - SHIFT_HIGH
-    // 4 - Complete
-    localparam IDLE       = 3'd0;
-    localparam LOAD       = 3'd1;
-    localparam SHIFT_LOW  = 3'd2;
-    localparam SHIFT_HIGH = 3'd3;
-    localparam COMPLETE   = 3'd4;
+    // 4 - Transfer - SHIFT_HIGH Sample
+    // 5 - Complete
+    localparam IDLE        = 3'd0;
+    localparam LOAD        = 3'd1;
+    localparam SHIFT_LOW   = 3'd2;
+    localparam SHIFT_HIGH  = 3'd3;
+    localparam SAMPLE      = 3'd4;
+    localparam COMPLETE    = 3'd5;
 
 
-    reg [1:0] state;
+    reg [2:0] state;
 
     // Shift registers
     reg [7:0] tx_shift_reg;
     reg [7:0] rx_shift_reg;
 
-    // Bit counter
+    // Bit counter for 1 byte (8 bits)
+    // Current bit position (7..0)
+    // Begin transmission at bit 7 (MSB)
     reg [2:0] bit_count;
 
 
     always @(posedge clk) begin
 
+        done <= 1'b0;
+
         if(rst) begin
+            /*  During reset the state is IDLE, busy and done are both low.
+                Slave CS_N is high (disabled)
+                spi_sclk is low.
+            */
             state <= IDLE;
-        end
-        else begin
+            busy <= 1'b0;
+            done <= 1'b0;
+            spi_cs_n <= 1'b1;
+            spi_sclk <= 1'b0;
+
+            bit_count <= 3'd7;
+            tx_shift_reg <= 8'b0;
+            rx_shift_reg <= 8'b0;
+            rx_data <= 8'b0;
+            spi_mosi <= 1'b0;
+
+        end else begin
             
-            CASE (state)
+            case (state)
 
                 IDLE: begin
+
+                    busy <= 1'b0;
+                    spi_cs_n <= 1'b1;
+                    spi_sclk <= 1'b0;
                     // wait for start
+
                     if (start) begin
                         state <= LOAD;
                     end
                 end
 
                 LOAD: begin
-
+                    tx_shift_reg <= tx_data;
+                    rx_shift_reg <= 8'b0;
+                    bit_count <= 3'd7;
+                    busy <= 1'b1;
+                    spi_cs_n <= 1'b0;
+                    spi_sclk <= 1'b0;
+                    state <= SHIFT_LOW;
                 end
 
                 SHIFT_LOW: begin
+                    busy <= 1'b1;
+                    spi_mosi <= tx_shift_reg[7];
+                    spi_sclk <= 1'b0;
+                    spi_cs_n <= 1'b0;
+                    if (tick) begin
+                        state <= SHIFT_HIGH;
+                    end
 
                 end
 
                 SHIFT_HIGH: begin
+                    busy <= 1'b1;
+                    spi_sclk <= 1'b1;
+                    spi_cs_n <= 1'b0;
+                    if (tick) begin
+                        state <= SAMPLE;
+                    end
+                end
+
+
+                SAMPLE: begin
+                    busy <= 1'b1;
+                    spi_sclk <= 1'b1;
+                    spi_cs_n <= 1'b0;
+                    tx_shift_reg <= {tx_shift_reg[6:0], 1'b0};
+                    // Sample the spi_miso
+                    rx_shift_reg <= {rx_shift_reg[6:0], spi_miso};
+                    if (bit_count == 3'd0)
+                        state <= COMPLETE;
+                    else begin
+                        bit_count <= bit_count - 1'b1;
+                        state <= SHIFT_LOW;
+                    end
+
 
                 end
 
                 COMPLETE: begin
+                    spi_cs_n <= 1'b1;
+                    spi_sclk <= 1'b0;
+                    busy <= 1'b0;
+                    done <= 1'b1;
+                    rx_data <= rx_shift_reg;
+                    state <= IDLE;
+                    spi_mosi <= 1'b0;
                     
                 end
 
                 default: begin
                     state <= IDLE;
+                    busy <= 1'b0;
+                    done <= 1'b0;
+                    spi_cs_n <= 1'b1;
+                    spi_sclk <= 1'b0;
+                    spi_mosi <= 1'b0;
                 end
-
-
+            endcase
         end
     end
-
-
-
-
 
 endmodule
 
@@ -186,15 +282,208 @@ endmodule
 
 
 module lcd_driver (
-    input  wire       clk,
-    input  wire       rst,
+    input  wire clk,
+    input  wire rst,
 
-    output wire       spi_cs,
-    output wire       spi_clk,
-    output wire       spi_mosi,
+    output wire spi_cs,
+    output wire spi_clk,
+    output wire spi_mosi,
 
-    output reg        lcd_dc,
-    output reg        lcd_rst
+    output reg  lcd_dc,
+    output reg  lcd_rst
 );
 
+    //---------------------------------------------------------
+    // SPI Tick Generator
+    //---------------------------------------------------------
+
+    wire tick;
+
+    clock_enable #(
+        .DIVISOR(24)     // 2 MHz tick
+    ) spi_clk_en (
+        .clk(clk),
+        .rst(rst),
+        .tick(tick)
+    );
+
+    //---------------------------------------------------------
+    // SPI Master
+    //---------------------------------------------------------
+
+    reg        spi_start;
+    reg [7:0]  spi_tx_data;
+
+    wire       spi_busy;
+    wire       spi_done;
+
+    spi_master spi0 (
+        .clk(clk),
+        .rst(rst),
+
+        .tick(tick),
+
+        .start(spi_start),
+
+        .busy(spi_busy),
+        .done(spi_done),
+
+        .tx_data(spi_tx_data),
+        .rx_data(),
+
+        .spi_cs_n(spi_cs),
+        .spi_sclk(spi_clk),
+        .spi_mosi(spi_mosi),
+        .spi_miso(1'b0)
+    );
+
+    //---------------------------------------------------------
+    // Slow Timer Tick
+    //---------------------------------------------------------
+
+    wire slow_tick;
+
+    clock_enable #(
+        .DIVISOR(48_000_000)
+    ) sec_timer (
+        .clk(clk),
+        .rst(rst),
+        .tick(slow_tick)
+    );
+
+    //---------------------------------------------------------
+    // FSM
+    //---------------------------------------------------------
+
+    localparam RESET_LOW       = 4'd0;
+    localparam RESET_HIGH      = 4'd1;
+
+    localparam SEND_SLEEP_OUT  = 4'd2;
+    localparam WAIT_SLEEP_OUT  = 4'd3;
+
+    localparam DISPLAY_OFF     = 4'd4;
+    localparam WAIT_OFF        = 4'd5;
+
+    localparam DISPLAY_ON      = 4'd6;
+    localparam WAIT_ON         = 4'd7;
+
+    reg [3:0] state;
+
+    always @(posedge clk) begin
+
+        spi_start <= 1'b0;
+
+        if (rst) begin
+
+            state <= RESET_LOW;
+
+            lcd_rst <= 1'b0;
+            lcd_dc  <= 1'b0;
+
+            spi_tx_data <= 8'h00;
+
+        end
+        else begin
+
+            case (state)
+
+                //-------------------------------------------------
+                // Hold display in reset for 1 second
+                //-------------------------------------------------
+
+                RESET_LOW: begin
+
+                    lcd_rst <= 1'b0;
+                    lcd_dc  <= 1'b0;
+
+                    if (slow_tick)
+                        state <= RESET_HIGH;
+                end
+
+                //-------------------------------------------------
+                // Release reset
+                //-------------------------------------------------
+
+                RESET_HIGH: begin
+
+                    lcd_rst <= 1'b1;
+
+                    if (slow_tick)
+                        state <= SEND_SLEEP_OUT;
+                end
+
+                //-------------------------------------------------
+                // 0x11 Sleep Out
+                //-------------------------------------------------
+
+                SEND_SLEEP_OUT: begin
+
+                    lcd_dc <= 1'b0;
+
+                    if (!spi_busy) begin
+                        spi_tx_data <= 8'h11;
+                        spi_start   <= 1'b1;
+                        state       <= WAIT_SLEEP_OUT;
+                    end
+                end
+
+                WAIT_SLEEP_OUT: begin
+
+                    if (spi_done)
+                        state <= DISPLAY_OFF;
+                end
+
+                //-------------------------------------------------
+                // 0x28 Display OFF
+                //-------------------------------------------------
+
+                DISPLAY_OFF: begin
+
+                    lcd_dc <= 1'b0;
+
+                    if (!spi_busy) begin
+                        spi_tx_data <= 8'h28;
+                        spi_start   <= 1'b1;
+                        state       <= WAIT_OFF;
+                    end
+                end
+
+                WAIT_OFF: begin
+
+                    if (spi_done)
+                        state <= DISPLAY_ON;
+                end
+
+                //-------------------------------------------------
+                // 0x29 Display ON
+                //-------------------------------------------------
+
+                DISPLAY_ON: begin
+
+                    lcd_dc <= 1'b0;
+
+                    if (!spi_busy) begin
+                        spi_tx_data <= 8'h29;
+                        spi_start   <= 1'b1;
+                        state       <= WAIT_ON;
+                    end
+                end
+
+                WAIT_ON: begin
+
+                    if (spi_done)
+                        state <= DISPLAY_OFF;
+                end
+
+                default: begin
+                    state <= RESET_LOW;
+                end
+
+            endcase
+
+        end
+    end
+
 endmodule
+
+
