@@ -1,0 +1,21 @@
+set_io clk 35
+
+#set_io LED[0] 9
+#set_io LED[1] 4
+set_io LED[0] 2
+set_io LED[1] 47 
+set_io LED[2] 10
+set_io LED[3] 6
+set_io LED[4] 3
+set_io LED[5] 48
+
+
+# PMOD 1
+#set_io P1_1     10
+#set_io P1_2     6
+#set_io P1_3     3
+#set_io P1_4     48
+#set_io P1_9     47
+#set_io P1_10    2
+#set_io P1_11    4
+#set_io P1_12    9

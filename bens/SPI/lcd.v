@@ -38,8 +38,11 @@ module top (
     output wire spi_mosi,
 
     output wire lcd_dc,
-    output wire lcd_rst
+
+    output wire led
 );
+
+    wire debug_alive;
 
     lcd_driver lcd0 (
         .clk(clk),
@@ -50,8 +53,11 @@ module top (
         .spi_mosi(spi_mosi),
 
         .lcd_dc(lcd_dc),
-        .lcd_rst(lcd_rst)
+
+        .debug_alive(debug_alive)
     );
+
+    assign led = debug_alive;
 
 endmodule
 
@@ -280,7 +286,6 @@ endmodule
 
 
 
-
 module lcd_driver (
     input  wire clk,
     input  wire rst,
@@ -288,19 +293,24 @@ module lcd_driver (
     output wire spi_cs,
     output wire spi_clk,
     output wire spi_mosi,
+    
 
     output reg  lcd_dc,
-    output reg  lcd_rst
+    output reg debug_alive
 );
 
+
+    
+    //assign debug_alive = spi_done;
+
     //---------------------------------------------------------
-    // SPI Tick Generator
+    // SPI tick generator
     //---------------------------------------------------------
 
     wire tick;
 
     clock_enable #(
-        .DIVISOR(24)     // 2 MHz tick
+        .DIVISOR(24)
     ) spi_clk_en (
         .clk(clk),
         .rst(rst),
@@ -308,14 +318,28 @@ module lcd_driver (
     );
 
     //---------------------------------------------------------
-    // SPI Master
+    // 1 second timer
     //---------------------------------------------------------
 
-    reg        spi_start;
-    reg [7:0]  spi_tx_data;
+    wire slow_tick;
 
-    wire       spi_busy;
-    wire       spi_done;
+    clock_enable #(
+        .DIVISOR(48_000_000)
+    ) sec_timer (
+        .clk(clk),
+        .rst(rst),
+        .tick(slow_tick)
+    );
+
+    //---------------------------------------------------------
+    // SPI master
+    //---------------------------------------------------------
+
+    reg       spi_start;
+    reg [7:0] spi_tx_data;
+
+    wire      spi_busy;
+    wire      spi_done;
 
     spi_master spi0 (
         .clk(clk),
@@ -338,79 +362,43 @@ module lcd_driver (
     );
 
     //---------------------------------------------------------
-    // Slow Timer Tick
+    // LCD command state machine
     //---------------------------------------------------------
 
-    wire slow_tick;
+    localparam SEND_SLEEP_OUT   = 3'd0;
+    localparam WAIT_SLEEP_OUT   = 3'd1;
 
-    clock_enable #(
-        .DIVISOR(48_000_000)
-    ) sec_timer (
-        .clk(clk),
-        .rst(rst),
-        .tick(slow_tick)
-    );
+    localparam SEND_DISPLAY_ON  = 3'd2;
+    localparam WAIT_DISPLAY_ON  = 3'd3;
+    localparam HOLD_ON          = 3'd4;
 
-    //---------------------------------------------------------
-    // FSM
-    //---------------------------------------------------------
+    localparam SEND_DISPLAY_OFF = 3'd5;
+    localparam WAIT_DISPLAY_OFF = 3'd6;
+    localparam HOLD_OFF         = 3'd7;
 
-    localparam RESET_LOW       = 4'd0;
-    localparam RESET_HIGH      = 4'd1;
-
-    localparam SEND_SLEEP_OUT  = 4'd2;
-    localparam WAIT_SLEEP_OUT  = 4'd3;
-
-    localparam DISPLAY_OFF     = 4'd4;
-    localparam WAIT_OFF        = 4'd5;
-
-    localparam DISPLAY_ON      = 4'd6;
-    localparam WAIT_ON         = 4'd7;
-
-    reg [3:0] state;
+    reg [2:0] state;
 
     always @(posedge clk) begin
 
+        // Default
         spi_start <= 1'b0;
 
         if (rst) begin
+            debug_alive <= 1'b0;
 
-            state <= RESET_LOW;
+            state <= SEND_SLEEP_OUT;
 
-            lcd_rst <= 1'b0;
-            lcd_dc  <= 1'b0;
+            lcd_dc <= 1'b0;
 
             spi_tx_data <= 8'h00;
 
         end
         else begin
 
+            if (spi_done)
+                debug_alive <= ~debug_alive;
+
             case (state)
-
-                //-------------------------------------------------
-                // Hold display in reset for 1 second
-                //-------------------------------------------------
-
-                RESET_LOW: begin
-
-                    lcd_rst <= 1'b0;
-                    lcd_dc  <= 1'b0;
-
-                    if (slow_tick)
-                        state <= RESET_HIGH;
-                end
-
-                //-------------------------------------------------
-                // Release reset
-                //-------------------------------------------------
-
-                RESET_HIGH: begin
-
-                    lcd_rst <= 1'b1;
-
-                    if (slow_tick)
-                        state <= SEND_SLEEP_OUT;
-                end
 
                 //-------------------------------------------------
                 // 0x11 Sleep Out
@@ -418,72 +406,104 @@ module lcd_driver (
 
                 SEND_SLEEP_OUT: begin
 
-                    lcd_dc <= 1'b0;
+                    lcd_dc <= 1'b0;      // Command
 
                     if (!spi_busy) begin
                         spi_tx_data <= 8'h11;
                         spi_start   <= 1'b1;
                         state       <= WAIT_SLEEP_OUT;
                     end
+
                 end
 
                 WAIT_SLEEP_OUT: begin
 
                     if (spi_done)
-                        state <= DISPLAY_OFF;
-                end
+                        state <= SEND_DISPLAY_ON;
 
-                //-------------------------------------------------
-                // 0x28 Display OFF
-                //-------------------------------------------------
-
-                DISPLAY_OFF: begin
-
-                    lcd_dc <= 1'b0;
-
-                    if (!spi_busy) begin
-                        spi_tx_data <= 8'h28;
-                        spi_start   <= 1'b1;
-                        state       <= WAIT_OFF;
-                    end
-                end
-
-                WAIT_OFF: begin
-
-                    if (spi_done)
-                        state <= DISPLAY_ON;
                 end
 
                 //-------------------------------------------------
                 // 0x29 Display ON
                 //-------------------------------------------------
 
-                DISPLAY_ON: begin
+                SEND_DISPLAY_ON: begin
 
-                    lcd_dc <= 1'b0;
+                    lcd_dc <= 1'b0;      // Command
 
                     if (!spi_busy) begin
                         spi_tx_data <= 8'h29;
                         spi_start   <= 1'b1;
-                        state       <= WAIT_ON;
+                        state       <= WAIT_DISPLAY_ON;
                     end
+
                 end
 
-                WAIT_ON: begin
+                WAIT_DISPLAY_ON: begin
 
                     if (spi_done)
-                        state <= DISPLAY_OFF;
+                        state <= HOLD_ON;
+
+                end
+
+                //-------------------------------------------------
+                // Hold ON for 1 second
+                //-------------------------------------------------
+
+                HOLD_ON: begin
+
+                    if (slow_tick)
+                        state <= SEND_DISPLAY_OFF;
+
+                end
+
+                //-------------------------------------------------
+                // 0x28 Display OFF
+                //-------------------------------------------------
+
+                SEND_DISPLAY_OFF: begin
+
+                    lcd_dc <= 1'b0;      // Command
+
+                    if (!spi_busy) begin
+                        spi_tx_data <= 8'h28;
+                        spi_start   <= 1'b1;
+                        state       <= WAIT_DISPLAY_OFF;
+                    end
+
+                end
+
+                WAIT_DISPLAY_OFF: begin
+
+                    if (spi_done)
+                        state <= HOLD_OFF;
+
+                end
+
+                //-------------------------------------------------
+                // Hold OFF for 1 second
+                //-------------------------------------------------
+
+                HOLD_OFF: begin
+
+                    if (slow_tick)
+                        state <= SEND_DISPLAY_ON;
+
                 end
 
                 default: begin
-                    state <= RESET_LOW;
+
+                    state <= SEND_SLEEP_OUT;
+
                 end
 
             endcase
 
         end
+
     end
 
 endmodule
+
 
 

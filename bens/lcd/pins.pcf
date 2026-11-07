@@ -1,0 +1,10 @@
+
+set_io clk  35
+set_io led 39
+
+# LCD controller pins IL9341
+
+set_io TFT_SPI_CS       45
+set_io TFT_SPI_MOSI     43
+set_io TFT_SPI_CLK      36
+set_io TFT_RS           42
