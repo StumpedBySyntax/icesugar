@@ -8,3 +8,11 @@ set_io TFT_SPI_CS       45
 set_io TFT_SPI_MOSI     43
 set_io TFT_SPI_CLK      36
 set_io TFT_RS           42
+
+
+set_io LED[0] 2
+set_io LED[1] 47 
+set_io LED[2] 10
+set_io LED[3] 6
+set_io LED[4] 3
+set_io LED[5] 48
