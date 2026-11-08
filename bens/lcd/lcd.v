@@ -31,7 +31,7 @@ module spi_master (
     output reg spi_cs_n,
     output wire spi_mosi,
     output reg spi_clk,
-    output wire spi_rs,
+    output reg spi_rs
 );
 
 
@@ -83,10 +83,10 @@ module spi_master (
                 spi_rs <= rs;
                 tx_shift_reg <= tx_data;
                 busy <= 1'b1;
-                bit_count <= 1'd7;
+                bit_count <= 8'd7;
 
                 if (clk_e) begin
-                    state <= SHIFT_HIGH;`
+                    state <= SHIFT_HIGH;
                 end
 
             end
@@ -114,7 +114,7 @@ module spi_master (
 
                 if(clk_e) begin
                     spi_clk <= 1'b0;
-                    tx_shift_reg  <= {1'b0, tx_shift_reg[7:1]};
+                    tx_shift_reg  <= {tx_shift_reg[6:0], 1'b0};
                     if (bit_count > 0) begin
                         //Shift and bit count can only occuring once in this state
                         bit_count <= bit_count - 1'b1;
@@ -134,10 +134,21 @@ module spi_master (
                 busy <= 1'b0;
                 spi_cs_n <= 1'b1;
                 
-                if (clk_e) begin
+                if (clk_e && ~start) begin
                     state <= IDLE;
                     spi_clk <= 1'b1;
                 end
+            end
+
+            default: begin
+                spi_cs_n <= 1'b1;
+                done <= 1'b0;
+                state <= IDLE;
+                spi_clk <= 1'b0;
+                spi_rs <= 1'b0;
+                bit_count <= 1'b0;
+                tx_shift_reg <= 8'b0;
+                busy <= 1'b0;
             end
         endcase
     end

@@ -1,0 +1,41 @@
+#set_io clk 35
+
+set_io LED[0] 9
+set_io LED[1] 4
+set_io LED[2] 2
+set_io LED[3] 47 
+set_io LED[4] 10
+set_io LED[5] 6
+set_io LED[6] 3
+set_io LED[7] 48
+
+
+# PMOD 1
+#set_io P1_1     10
+#set_io P1_2     6
+#set_io P1_3     3
+#set_io P1_4     48
+#set_io P1_9     47
+#set_io P1_10    2
+#set_io P1_11    4
+#set_io P1_12    9
+
+
+# PMOD 3
+#set_io P3_1     34 
+#set_io P3_2     31
+#set_io P3_3     27
+#set_io P3_4     25
+#set_io P3_9     23
+#set_io P3_10    26
+#set_io P3_11    28
+#set_io P3_12    32
+
+set_io SW[0] 32
+set_io SW[1] 28
+set_io SW[2] 26
+set_io SW[3] 23
+set_io SW[4] 34
+set_io SW[5] 31
+set_io SW[6] 27
+set_io SW[7] 25
